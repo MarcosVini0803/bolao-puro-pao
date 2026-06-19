@@ -30,7 +30,9 @@ async function createServerDatabaseIfNeeded() {
 let pool;
 
 async function connectPool() {
-  await createServerDatabaseIfNeeded();
+  if (!isTiDB) {
+    await createServerDatabaseIfNeeded();
+  }
 
   pool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
@@ -75,6 +77,7 @@ async function initDb() {
   )`);
 
   const [rows] = await pool.query('SELECT COUNT(*) AS total FROM games');
+
   if (rows[0].total === 0) {
     await pool.query(
       `INSERT INTO games (team_a, team_b, game_date, game_time, bet_limit, bet_value, status)
@@ -93,7 +96,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'troque-essa-chave',
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax', secure: false, maxAge: 1000 * 60 * 60 * 8 }
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: false,
+    maxAge: 1000 * 60 * 60 * 8
+  }
 }));
 
 const storage = multer.diskStorage({
@@ -140,11 +148,13 @@ app.get('/api/games', async (req, res) => {
 app.post('/api/bets', upload.single('proof'), async (req, res) => {
   try {
     const { game_id, name, phone, score_a, score_b, proof_note } = req.body;
+
     if (!game_id || !name || !phone || score_a === undefined || score_b === undefined) {
       return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
     }
 
     const [games] = await pool.query('SELECT * FROM games WHERE id = ?', [game_id]);
+
     if (!games.length) return res.status(404).json({ error: 'Jogo não encontrado.' });
     if (games[0].status !== 'Aberto') return res.status(400).json({ error: 'Palpites encerrados para este jogo.' });
 
@@ -180,32 +190,57 @@ app.get('/api/bets', async (req, res) => {
   const [rows] = await pool.query(`SELECT bets.*, games.team_a, games.team_b, games.bet_value
     FROM bets JOIN games ON games.id = bets.game_id ${where} ORDER BY bets.id DESC`, params);
 
-  res.json(rows.map(r => ({ ...r, proof_url: r.proof_file ? '/uploads/' + r.proof_file : null })));
+  res.json(rows.map(r => ({
+    ...r,
+    proof_url: r.proof_file ? '/uploads/' + r.proof_file : null
+  })));
 });
 
 app.get('/api/summary/:gameId', async (req, res) => {
   const [[game]] = await pool.query('SELECT * FROM games WHERE id = ?', [req.params.gameId]);
+
   if (!game) return res.status(404).json({ error: 'Jogo não encontrado' });
 
-  const [[paid]] = await pool.query('SELECT COUNT(*) AS total FROM bets WHERE game_id = ? AND status = "Pago"', [game.id]);
-  const [[pending]] = await pool.query('SELECT COUNT(*) AS total FROM bets WHERE game_id = ? AND status = "Pendente"', [game.id]);
+  const [[paid]] = await pool.query(
+    'SELECT COUNT(*) AS total FROM bets WHERE game_id = ? AND status = "Pago"',
+    [game.id]
+  );
+
+  const [[pending]] = await pool.query(
+    'SELECT COUNT(*) AS total FROM bets WHERE game_id = ? AND status = "Pendente"',
+    [game.id]
+  );
 
   const totalPaid = Number(paid.total) * Number(game.bet_value);
-  res.json({ paid: paid.total, pending: pending.total, total_paid: totalPaid, prize: totalPaid * 0.8, organization: totalPaid * 0.2 });
+
+  res.json({
+    paid: paid.total,
+    pending: pending.total,
+    total_paid: totalPaid,
+    prize: totalPaid * 0.8,
+    organization: totalPaid * 0.2
+  });
 });
 
 app.post('/api/admin/login', (req, res) => {
-  if (process.env.ADMIN_PASSWORD && req.body.password === process.env.ADMIN_PASSWORD) {
+  const typedPassword = String(req.body.password || '').trim();
+  const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim();
+
+  if (adminPassword && typedPassword === adminPassword) {
     req.session.admin = true;
     return res.json({ ok: true });
   }
+
   res.status(401).json({ error: 'Senha incorreta' });
 });
 
-app.post('/api/admin/logout', requireAdmin, (req, res) => req.session.destroy(() => res.json({ ok: true })));
+app.post('/api/admin/logout', requireAdmin, (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
 
 app.post('/api/admin/games', requireAdmin, async (req, res) => {
   const { team_a, team_b, game_date, game_time, bet_limit, bet_value } = req.body;
+
   if (!team_a || !team_b || !game_date || !game_time || !bet_limit || !bet_value) {
     return res.status(400).json({ error: 'Preencha todos os campos.' });
   }
@@ -221,6 +256,7 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
 
 app.patch('/api/admin/games/:id', requireAdmin, async (req, res) => {
   const { status, final_a, final_b } = req.body;
+
   await pool.query(
     `UPDATE games SET status = COALESCE(?, status), final_a = ?, final_b = ? WHERE id = ?`,
     [
@@ -230,11 +266,13 @@ app.patch('/api/admin/games/:id', requireAdmin, async (req, res) => {
       req.params.id
     ]
   );
+
   res.json({ ok: true });
 });
 
 app.patch('/api/admin/bets/:id', requireAdmin, async (req, res) => {
   const { status } = req.body;
+
   if (!['Pendente', 'Pago', 'Cancelado'].includes(status)) {
     return res.status(400).json({ error: 'Status inválido' });
   }
@@ -251,6 +289,7 @@ app.get('/api/admin/export.csv', requireAdmin, async (req, res) => {
     FROM bets JOIN games ON games.id = bets.game_id ORDER BY bets.id DESC`);
 
   let csv = 'ID,Jogo,Data,Hora,Nome,Telefone,Palpite,Valor,Status,Comprovante,Criado em\n';
+
   for (const r of rows) {
     csv += [
       r.id,
