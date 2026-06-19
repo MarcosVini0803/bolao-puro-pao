@@ -11,7 +11,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const isTiDB = (process.env.DB_HOST || '').includes('tidbcloud.com');
-const sslConfig = isTiDB ? { minVersion: 'TLSv1.2', rejectUnauthorized: false } : undefined;
+const sslConfig = isTiDB
+  ? {
+      minVersion: 'TLSv1.2',
+      rejectUnauthorized: false
+    }
+  : undefined;
+
+let pool;
 
 async function createServerDatabaseIfNeeded() {
   const base = await mysql.createConnection({
@@ -23,11 +30,12 @@ async function createServerDatabaseIfNeeded() {
     ssl: sslConfig
   });
 
-  await base.query(`CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'bolao_puro_pao'}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  await base.query(
+    `CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'bolao_puro_pao'}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+  );
+
   await base.end();
 }
-
-let pool;
 
 async function connectPool() {
   if (!isTiDB) {
@@ -121,7 +129,8 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
-    cb(allowed.includes(file.mimetype) ? null : new Error('Tipo de arquivo não permitido.'), allowed.includes(file.mimetype));
+    const isAllowed = allowed.includes(file.mimetype);
+    cb(isAllowed ? null : new Error('Tipo de arquivo não permitido.'), isAllowed);
   }
 });
 
@@ -180,10 +189,10 @@ app.post('/api/bets', upload.single('proof'), async (req, res) => {
 
 app.get('/api/bets', async (req, res) => {
   const params = [];
-  let where = '';
+  let where = 'WHERE bets.status != "Cancelado"';
 
   if (req.query.game_id) {
-    where = 'WHERE bets.game_id = ?';
+    where += ' AND bets.game_id = ?';
     params.push(req.query.game_id);
   }
 
@@ -278,6 +287,7 @@ app.patch('/api/admin/bets/:id', requireAdmin, async (req, res) => {
   }
 
   await pool.query('UPDATE bets SET status = ? WHERE id = ?', [status, req.params.id]);
+
   res.json({ ok: true });
 });
 
@@ -324,7 +334,7 @@ connectPool()
   })
   .catch(err => {
     console.error('Erro ao conectar/criar banco MySQL.');
-    console.error('Confira o arquivo .env: DB_USER, DB_PASSWORD e se o MySQL/TiDB está rodando.');
+    console.error('Confira as variáveis DB_HOST, DB_USER, DB_PASSWORD, DB_NAME e DB_PORT.');
     console.error(err.message);
     process.exit(1);
   });
