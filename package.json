@@ -1,0 +1,16 @@
+{
+  "name": "bolao-puro-pao-mysql-final",
+  "version": "1.0.0",
+  "description": "Bol\u00e3o online com MySQL, PIX, comprovante e painel admin",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.11.5"
+  }
+}
